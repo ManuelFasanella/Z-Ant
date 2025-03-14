@@ -132,16 +132,36 @@ pub const ReadyNode = struct {
     }
 };
 
+// Add a networkInputs ArrayList to store all input tensors
+pub var networkInputs = std.ArrayList(ReadyTensor).init(allocator);
+
 pub fn setGlobalAttributes(model: ModelOnnx) !void {
     //First convert the optional String of numbers divided by a comma into an array
     const parsedInputshape: []const i64 = try utils.parseNumbers(codegen_options.shape);
 
-    //setting the input
+    // Clear the networkInputs list before populating it
+    networkInputs.clearRetainingCapacity();
+
+    // Populate networkInputs with all input tensors
     for (model.graph.?.inputs) |input| {
-        if (std.mem.indexOf(u8, try utils.getSanitizedName(input.name.?), "input")) |_| {
-            std.debug.print("\n SETTING networkInput \n name = {s} \n shape={any}", .{ input.name.?, input.type.?.tensor_type.?.shape.?.shape });
-            networkInput.name = input.name.?;
-            networkInput.shape = input.type.?.tensor_type.?.shape.?.shape;
+        if (input.type.?.tensor_type) |tensor_type| {
+            if (tensor_type.shape) |shape| {
+                const inputTensor = ReadyTensor{
+                    .name = input.name orelse "", // Handle optional name field
+                    .shape = try utils.getShapeFromTensorShapeProto(shape),
+                    .ready = false,
+                    .tensorProto = null,
+                    .tag = TensorTag.INPUT,
+                };
+
+                try networkInputs.append(inputTensor);
+
+                // If this is the first input, also set it as the networkInput
+                if (std.mem.eql(u8, networkInput.name, "")) {
+                    networkInput.name = input.name orelse "";
+                    networkInput.shape = try utils.getShapeFromTensorShapeProto(shape);
+                }
+            }
         }
     }
 
@@ -226,4 +246,34 @@ fn populateReadyGraph(model: ModelOnnx) !void {
 
         try readyGraph.append(try ReadyNode.create(node_ptr));
     }
+}
+
+// Add this function to properly clean up all global resources
+pub fn deinit() void {
+    // Free all tensors in the hash map
+    var it = tensorHashMap.iterator();
+    while (it.next()) |entry| {
+        // Free the tensor's shape array if it was dynamically allocated
+        if (entry.value_ptr.shape.len > 0) {
+            allocator.free(entry.value_ptr.shape);
+        }
+
+        // Free the tensor's name if it was dynamically allocated
+        if (entry.value_ptr.name.len > 0) {
+            allocator.free(entry.value_ptr.name);
+        }
+    }
+
+    // Clear the hash map
+    tensorHashMap.deinit();
+
+    // Free all nodes in the ready graph
+    for (readyGraph.items) |*node| {
+        node.inputs.deinit();
+        node.outputs.deinit();
+    }
+    readyGraph.deinit();
+
+    // Free the network inputs list
+    networkInputs.deinit();
 }

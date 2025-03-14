@@ -97,6 +97,7 @@ pub inline fn getTypeString(data_type: DataType) ![]const u8 {
 //Returns the sanitized tensor's name, removes all non alphanumeric chars
 pub inline fn getSanitizedName(name: []const u8) ![]const u8 {
     var sanitized = try allocator.alloc(u8, name.len);
+    errdefer allocator.free(sanitized);
 
     for (name, 0..) |char, i| {
         sanitized[i] = if (std.ascii.isAlphanumeric(char) or char == '_')
@@ -468,4 +469,28 @@ pub fn loadUserTests(comptime T: type, user_tests_path: []const u8) !std.json.Pa
     const parsed_user_tests = try std.json.parseFromSlice([]tests.UserTest(T), allocator, user_tests_content, .{});
 
     return parsed_user_tests;
+}
+
+// Fix the function to extract shape from TensorShapeProto
+pub fn getShapeFromTensorShapeProto(shape: *onnx.TensorShapeProto) ![]const i64 {
+    var dims = std.ArrayList(i64).init(allocator);
+    defer dims.deinit();
+
+    for (shape.dims) |dim| {
+        if (dim.dim_value) |value| {
+            try dims.append(value);
+        } else if (dim.dim_param) |_| {
+            // For symbolic dimensions, use a default value or handle as needed
+            try dims.append(1); // Default to 1 for symbolic dimensions
+        } else {
+            // If neither dim_value nor dim_param is present
+            try dims.append(1);
+        }
+    }
+
+    // Create a persistent copy of the dimensions
+    const result = try allocator.alloc(i64, dims.items.len);
+    @memcpy(result, dims.items);
+
+    return result;
 }

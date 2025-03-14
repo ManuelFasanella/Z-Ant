@@ -57,6 +57,15 @@ pub fn oneOpModelsCodegen() !void {
         defer allocator.free(model_path);
         std.debug.print("model_path : {s}", .{model_path});
 
+        // Check if the file exists before trying to open it
+        _ = std.fs.cwd().access(model_path, .{}) catch |err| {
+            if (err == error.FileNotFound) {
+                std.debug.print("File not found: {s}, skipping...\n", .{model_path});
+                continue; // Skip this operation
+            }
+            return err; // Return other errors
+        };
+
         // Load the model.
         var model = try onnx.parseFromFile(allocator, model_path);
         defer model.deinit(allocator);
@@ -80,6 +89,9 @@ pub fn oneOpModelsCodegen() !void {
         // Create the code for the model
         try codeGen.skeleton.writeZigFile(trimmed_line, generated_path, model);
     }
+
+    // Clean up global resources at the end
+    defer codeGen.globals.deinit();
 }
 
 // //------------operation structs

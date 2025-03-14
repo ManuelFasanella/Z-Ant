@@ -320,54 +320,156 @@ fn write_outputsResetMethod(writer: std.fs.File.Writer) !void {
 // -------------------------------- WRITE CHECKS --------------------------------
 
 fn write_checks(writer: std.fs.File.Writer) !void {
-    // Autogen a check for the input shape as arg VS input shape as codegen option
+    // Check if we have multiple inputs
+    const hasMultipleInputs = globals.networkInputs.items.len > 1;
 
-    //check on the number of dims
-    _ = try writer.print(
-        \\
-        \\    //checks on the input parameters
-        \\    if (shape_len == 0) return ;
-        \\    if(shape_len != {}) return ;
-    , .{globals.networkInput.shape.len});
-
-    //check on dims correspondance
-    for (globals.networkInput.shape, 0..) |dim, i| {
+    if (hasMultipleInputs) {
+        // For multiple inputs, we expect a flattened array with all inputs
+        // We'll check the total size matches what we expect
         _ = try writer.print(
             \\
-            \\    if( input_shape[{}] != {}) return ;
-        , .{ i, dim });
+            \\    //checks on the input parameters for multiple inputs
+            \\    if (shape_len == 0) return;
+            \\    
+            \\    // For multiple inputs, we expect a flattened array with all inputs concatenated
+            \\    // Verify the shape array has the expected dimensions for all inputs
+        , .{});
+
+        var totalElements: usize = 0;
+        for (globals.networkInputs.items) |networkInput| {
+            var inputSize: usize = 1;
+            for (networkInput.shape) |dim| {
+                inputSize *= @intCast(dim);
+            }
+            totalElements += inputSize;
+        }
+
+        _ = try writer.print(
+            \\
+            \\    // Total expected elements across all inputs: {}
+        , .{totalElements});
+    } else {
+        // Original single input case
+        _ = try writer.print(
+            \\
+            \\    //checks on the input parameters
+            \\    if (shape_len == 0) return ;
+            \\    if(shape_len != {}) return ;
+        , .{globals.networkInput.shape.len});
+
+        //check on dims correspondance
+        for (globals.networkInput.shape, 0..) |dim, i| {
+            _ = try writer.print(
+                \\
+                \\    if( input_shape[{}] != {}) return ;
+            , .{ i, dim });
+        }
     }
 }
 
 // -------------------------------- WRITE PREDICT() --------------------------------
 
 fn write_predictInitialization(writer: std.fs.File.Writer) !void {
-    _ = try writer.print(
-        \\  
-        \\    //computing the size of the input tensor
-        \\    var size: u32 = 1;
-        \\    for(0..shape_len) |dim_i| {{
-        \\        size *= input_shape[dim_i];
-        \\    }}
-        \\     
-        \\    //allocating space in memory for the data
-        \\    const data = allocator.alloc(T, size) catch return;
-        \\    defer allocator.free(data);
-        \\    for (0..size) |i| {{
-        \\        data[i] = input[i]; // Copying input elements 
-        \\    }}
-        \\    
-        \\    //converting the shape from [*]u32 to []usize
-        \\    const usized_shape: []usize = utils.u32ToUsize(input_shape, shape_len) catch return;
-        \\    var tensor_{s} = Tensor(T).fromShape(&allocator, @constCast(usized_shape)) catch return;
-        \\    defer allocator.free(usized_shape);
-        \\    defer tensor_{s}.deinit();
-        \\    @memcpy(tensor_{s}.data, data);
-    , .{
-        try utils.getSanitizedName(globals.networkInput.name),
-        try utils.getSanitizedName(globals.networkInput.name),
-        try utils.getSanitizedName(globals.networkInput.name),
-    });
+    // Check if we have multiple inputs
+    const hasMultipleInputs = globals.networkInputs.items.len > 1;
+
+    if (hasMultipleInputs) {
+        // Handle multiple inputs case
+        _ = try writer.print(
+            \\  
+            \\    // This model has multiple inputs
+            \\    // We expect the input array to contain all inputs concatenated
+            \\    var current_input_offset: usize = 0;
+            \\
+        , .{});
+
+        for (globals.networkInputs.items) |networkInput| {
+            const sanitized_name = try utils.getSanitizedName(networkInput.name);
+
+            _ = try writer.print(
+                \\
+                \\    // Processing input: {s}
+                \\    {{
+                \\        //computing the size of the input tensor
+                \\        var size_{s}: u32 = 1;
+                \\        for(0..{}) |dim_i| {{
+                \\            size_{s} *= {};
+                \\        }}
+                \\     
+                \\        //allocating space in memory for the data
+                \\        const data_{s} = allocator.alloc(T, size_{s}) catch return;
+                \\        defer allocator.free(data_{s});
+                \\        for (0..size_{s}) |i| {{
+                \\            data_{s}[i] = input[current_input_offset + i]; // Copying input elements 
+                \\        }}
+                \\        current_input_offset += size_{s};
+                \\    
+                \\        //creating shape array
+                \\        const shape_{s} = [_]usize{{
+            , .{
+                networkInput.name,
+                sanitized_name,
+                networkInput.shape.len,
+                sanitized_name,
+                networkInput.shape.len,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+            });
+
+            // Write shape values
+            for (networkInput.shape, 0..) |dim, i| {
+                if (i > 0) try writer.print(",", .{});
+                try writer.print(" {}", .{dim});
+            }
+
+            _ = try writer.print(
+                \\ }};
+                \\        var tensor_{s} = Tensor(T).fromShape(&allocator, &shape_{s}) catch return;
+                \\        defer tensor_{s}.deinit();
+                \\        @memcpy(tensor_{s}.data, data_{s});
+                \\    }}
+            , .{
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+                sanitized_name,
+            });
+        }
+    } else {
+        // Original single input case
+        _ = try writer.print(
+            \\  
+            \\    //computing the size of the input tensor
+            \\    var size: u32 = 1;
+            \\    for(0..shape_len) |dim_i| {{
+            \\        size *= input_shape[dim_i];
+            \\    }}
+            \\     
+            \\    //allocating space in memory for the data
+            \\    const data = allocator.alloc(T, size) catch return;
+            \\    defer allocator.free(data);
+            \\    for (0..size) |i| {{
+            \\        data[i] = input[i]; // Copying input elements 
+            \\    }}
+            \\    
+            \\    //converting the shape from [*]u32 to []usize
+            \\    const usized_shape: []usize = utils.u32ToUsize(input_shape, shape_len) catch return;
+            \\    var tensor_{s} = Tensor(T).fromShape(&allocator, @constCast(usized_shape)) catch return;
+            \\    defer allocator.free(usized_shape);
+            \\    defer tensor_{s}.deinit();
+            \\    @memcpy(tensor_{s}.data, data);
+        , .{
+            try utils.getSanitizedName(globals.networkInput.name),
+            try utils.getSanitizedName(globals.networkInput.name),
+            try utils.getSanitizedName(globals.networkInput.name),
+        });
+    }
 }
 
 fn writeOperation(writer: std.fs.File.Writer, readyNode: *ReadyNode) !void {
